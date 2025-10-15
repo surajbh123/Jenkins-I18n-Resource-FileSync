@@ -5,7 +5,13 @@ def cloneRepository(String repoUrl, String branchName , String folderPath) {
     println "Branch Name: ${branchName}"
     println "Folder Path: ${folderPath}"
 
-    // Create the folder if it doesn't exist
+    // write the git clone and it should be independent of the os running jenkins
+    sh """
+        #!/bin/bash
+        git clone --branch ${branchName} ${repoUrl} ${folderPath}
+    """
+    println "Repository cloned successfully to ${folderPath}"
+
 }
 
 pipeline {

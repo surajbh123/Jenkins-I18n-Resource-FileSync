@@ -1,13 +1,8 @@
-C:\Users\suraj\.jenkins\jobs\I18n-Resource-FileSync
-C:\ProgramData\Jenkins\.jenkins\jobs\I18n-Resource-FileSync
+## TO see jenkins password
+sudo -s
+cat passwd.txt
 
-# Jenkins Home Directory
-JENKINS_HOME=C:\Users\<USER>\.jenkins
-
-mkdir 12011200/staticResources/resourcesBundle/i18n
-mkdir 12011201/staticResources/resourcesBundle/i18n
-
-## plugin to install
+## Plugins to install
 1. Pipeline
-2. groovy
-3. Config File Provider
+2. Git
+3. Config pr
