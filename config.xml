@@ -1,25 +1,10 @@
 <?xml version='1.1' encoding='UTF-8'?>
 <project>
   <actions/>
-  <description>
-    Watches for changes in the I18n resource bundle Git repository. 
-    When triggered, detects which files have changed and copies/replaces those files to the target server.
-  </description>
+  <description>I18n Resource File Synchronization Job - Prints GitHub URL, file path, and branch name from properties file</description>
   <keepDependencies>false</keepDependencies>
   <properties/>
-  <scm class="hudson.plugins.git.GitSCM" plugin="git@5.2.1">
-    <configVersion>2</configVersion>
-    <userRemoteConfigs>
-      <hudson.plugins.git.UserRemoteConfig>
-        <url>YOUR_GIT_REPO_URL_HERE</url>
-      </hudson.plugins.git.UserRemoteConfig>
-    </userRemoteConfigs>
-    <branches>
-      <hudson.plugins.git.BranchSpec>
-        <name>*/main</name>
-      </hudson.plugins.git.BranchSpec>
-    </branches>
-  </scm>
+  <scm class="hudson.scm.NullSCM"/>
   <canRoam>true</canRoam>
   <disabled>false</disabled>
   <blockBuildWhenDownstreamBuilding>false</blockBuildWhenDownstreamBuilding>
@@ -27,23 +12,27 @@
   <triggers/>
   <concurrentBuild>false</concurrentBuild>
   <builders>
-    <hudson.tasks.Shell>
-      <command>
-#!/bin/bash
-# Detect changed files in last commit
-CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '.properties')
-echo "Changed files: $CHANGED_FILES"
-
-# Copy changed files to the server (edit 'TARGET_DIR' and copy command as needed)
-TARGET_DIR=/path/to/your/target/server/resources
-for file in $CHANGED_FILES; do
-  echo "Copying $file to $TARGET_DIR"
-  cp "$file" "$TARGET_DIR/"
-  # If remote, use: scp "$file" user@server:$TARGET_DIR/
-done
-      </command>
-    </hudson.tasks.Shell>
+    <hudson.plugins.groovy.Groovy>
+      <scriptSource class="hudson.plugins.groovy.FileScriptSource">
+        <scriptFile>${WORKSPACE}/I18nResourceFileSync.groovy</scriptFile>
+      </scriptSource>
+      <groovyName>groovy</groovyName>
+      <parameters></parameters>
+      <scriptParameters></scriptParameters>
+      <properties></properties>
+      <javaOpts></javaOpts>
+      <classPath></classPath>
+    </hudson.plugins.groovy.Groovy>
   </builders>
   <publishers/>
-  <buildWrappers/>
+  <buildWrappers>
+    <org.jenkinsci.plugins.configfiles.buildwrapper.ConfigFileBuildWrapper plugin="config-file-provider@3.7.0">
+      <managedFiles>
+        <org.jenkinsci.plugins.configfiles.buildwrapper.ManagedFile>
+          <fileId>git-properties</fileId>
+          <targetLocation>git.properties</targetLocation>
+        </org.jenkinsci.plugins.configfiles.buildwrapper.ManagedFile>
+      </managedFiles>
+    </org.jenkinsci.plugins.configfiles.buildwrapper.ConfigFileBuildWrapper>
+  </buildWrappers>
 </project>
