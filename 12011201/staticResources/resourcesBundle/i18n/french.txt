@@ -1,0 +1,3 @@
+# french.txt
+incorrectPassword=Le mot de passe que vous avez entré est incorrect.
+invalidEmail=L'adresse e-mail que vous avez entrée n'est pas valide.
