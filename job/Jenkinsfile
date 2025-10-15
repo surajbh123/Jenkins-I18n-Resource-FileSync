@@ -1,0 +1,59 @@
+// create new folder in workspace in this job where we clone the repo and copy the file to the desired location
+def cloneRepository(String repoUrl, String branchName , String folderPath) {
+    println "Cloning repository..."
+    println "Repository URL: ${repoUrl}"
+    println "Branch Name: ${branchName}"
+    println "Folder Path: ${folderPath}"
+
+    // Create the folder if it doesn't exist
+}
+
+pipeline {
+    agent any
+    stages {
+        stage('I18n Resource File Sync') {
+            steps {
+                script {
+                    println "==============================="
+                    println "Starting I18n Resource File Sync Job"
+
+                    def workspacePath = pwd()
+                    println "Workspace path: ${workspacePath}"
+                    def repoFolder = "cloned-repo"
+                    def repoPath = "${workspacePath}/${repoFolder}"
+
+                    // The git.properties file is expected to be in the workspace.
+                    println "Checking for properties file: git.properties"
+
+                    if (fileExists('git.properties')) {
+                        println "Found properties file: git.properties"
+
+                        // Read and display the file contents
+                        def fileContent = readFile('git.properties')
+                        println "File contents:"
+                        println fileContent
+                        def props = [:]
+                        fileContent.split('\n').each { line ->
+                            line = line.trim()
+                            if (line && !line.startsWith('#')) {
+                                def parts = line.split('=', 2)
+                                if (parts.length == 2) {
+                                    props[parts[0].trim()] = parts[1].trim()
+                                }
+                            }
+                        }
+
+                        def githubUrl = props.githubUrl
+                        def filePath = props.filePath
+                        def branchName = props.branchName
+
+                        cloneRepository(githubUrl, branchName, repoPath)
+                    } else {
+                        // Fail the build if the properties file is not found
+                        error "Properties file not found in workspace: git.properties"
+                    }
+                }
+            }
+        }
+    }
+}
