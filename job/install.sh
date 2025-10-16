@@ -33,4 +33,3 @@ else
     sudo apt install jenkins
     # change jenkins home directory permissions
 fi
-

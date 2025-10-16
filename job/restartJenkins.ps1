@@ -8,6 +8,7 @@ $workspaceFolder = Join-Path $jenkinsHome "workspace\$jobName"
 
 $jobDir = Join-Path $jenkinsHome "jobs\$jobName"
 
+
 # Ensure the workspace folder exists. If not, create it.
 if (!(Test-Path -Path $workspaceFolder)) {
     Write-Host "Workspace directory not found. Creating it at: $workspaceFolder"
