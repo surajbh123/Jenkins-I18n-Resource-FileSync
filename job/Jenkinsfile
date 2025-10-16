@@ -8,23 +8,23 @@ def cloneRepositoryIfNotExists(String repoUrl, String branchName , String folder
     // Ensure the target directory exists
     sh "mkdir -p ${folderPath}"
 
-    // if exist then go inside and and check if that branch exist
-    dir(folderPath) {
-        def branchExists = sh(script: "git show-ref --verify --quiet refs/heads/${branchName}", returnStatus: true) == 0
-        if (branchExists) {
-            println "Branch '${branchName}' exists in the repository."
-            return
-        } else {
-            println "Branch '${branchName}' does not exist in the repository."
-            sh """
-                #!/bin/bashgit
-                
-                mkdir -p ${folderPath}
-                git clone --branch ${branchName} ${repoUrl} ${folderPath}
-            """
-            println "Repository cloned successfully to ${folderPath}"
-        }
+    // Check if git repository already exists then skip cloning
+    if (fileExists("${folderPath}/.git")) {
+        println "Git repository already exists in ${folderPath}. Skipping clone."
+        return
     }
+
+    // clone the repository
+    dir(folderPath) {
+        sh """
+            git init
+            git remote add origin ${repoUrl}
+            git fetch origin ${branchName}:${branchName}
+            git checkout ${branchName}
+        """
+        println 'Repository cloned successfully.'
+    }
+
 }
 
 // function fetch latest changes
@@ -32,25 +32,25 @@ def renameBranchAndFetch(String branchName, String repoPath) {
     String backupBranchName = "backup_${branchName}"
     println "Renaming branch '${branchName}' to '${backupBranchName}' and fetching again..."
     println "Repository Path: ${repoPath}"
-    sh "cd ${repoPath}"
-    sh """
-        git branch -m ${branchName} ${backupBranchName}
-        git fetch origin ${branchName}:${branchName}
-        git checkout -b ${branchName}
-        git branch -D ${backupBranchName}
-    """
-    println 'Branch renamed and fetched successfully.'
-    println 'Current branches:'
-    sh '''
-        git branch -a
-    '''
+
+    // Use dir() to change directory context for all operations
+    dir(repoPath) {
+        sh """
+            git branch -D ${branchName} || true
+            git branch -m ${branchName} ${backupBranchName} || true
+            git fetch origin ${branchName}:${branchName}
+            git checkout ${branchName}
+            git branch -D ${backupBranchName} || true
+        """
+        println 'Branch renamed and fetched successfully.'
+        println 'Current branches:'
+        sh 'git branch -a'
+    }
 }
 
-def trackChangesOrCommit(String filePath) {
-    println "Tracking changes for file: ${filePath}"
-    // Implement your logic to track changes in the specified file
-    // This could involve checking file hashes, timestamps, etc.
-    // For demonstration, we'll just print a message
+def trackChangesOrCommit(String repoPath, String branchName) {
+    println "Tracking changes for branch: ${branchName} in repo: ${repoPath}"
+
     println 'Change tracking logic not implemented yet.'
 }
 
@@ -67,6 +67,11 @@ pipeline {
                     println "Workspace path: ${workspacePath}"
                     def repoFolder = 'resourceBundle'
                     def repoPath = "${workspacePath}/${repoFolder}"
+                    // create file in workspace to audit commit that processed
+                    def auditFilePath = "${workspacePath}/i18n_audit.txt"
+                    if (!fileExists(auditFilePath)) {
+                        writeFile file: auditFilePath, text: ''
+                    }
 
                     // The git.properties file is expected to be in the workspace.
                     println 'Checking for properties file: git.properties'

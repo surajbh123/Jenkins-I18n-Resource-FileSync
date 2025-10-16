@@ -17,3 +17,6 @@ cat passwd.txt
 5. Save
 
 ## for every changes in properties file run deploy.sh
+
+## IF any script wont work use below commands
+` sed -i 's/\r$//' {fileName} `
