@@ -27,11 +27,12 @@ echo "Workspace Directory: $WORKSPACE_DIR"
 #     sudo rm -rf "$JOB_DIR"
 # fi
 
-## delete workspace directory if exists (safe to clean)
+## delete workspace directory if exists for a clean start
 if [ -d "$WORKSPACE_DIR" ]; then
     echo "Cleaning workspace directory: $WORKSPACE_DIR"
     sudo rm -rf "$WORKSPACE_DIR"
 fi
+
 
 echo "Cleaned up workspace directory."
 

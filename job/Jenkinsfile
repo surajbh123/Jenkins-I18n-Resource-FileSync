@@ -1,10 +1,11 @@
-// create new folder in workspace in this job where we clone the repo and copy the file to the desired location
-def cloneRepositoryIfNotExists(String repoUrl, String branchName , String folderPath) {
-    println 'Cloning repository...'
-    println "Repository URL: ${repoUrl}"
-    println "Branch Name: ${branchName}"
-    println "Folder Path: ${folderPath}"
+// function to create new folder in workspace in this job where we clone the repo and copy the file to the desired location
+def cloneRepositoryIfNotExists(Map jobConfig) {
+    println 'Cloning repository... !!!!!'
+    println "Repository URL: ${jobConfig.githubUrl} , Branch Name: ${jobConfig.branchName}, Folder Path: ${jobConfig.repoPath}"
 
+    String folderPath = jobConfig.repoPath
+    String repoUrl = jobConfig.githubUrl
+    String branchName = jobConfig.branchName
     // Ensure the target directory exists
     sh "mkdir -p ${folderPath}"
 
@@ -19,16 +20,18 @@ def cloneRepositoryIfNotExists(String repoUrl, String branchName , String folder
         sh """
             git init
             git remote add origin ${repoUrl}
-            git fetch origin ${branchName}:${branchName}
+            git fetch origin ${branchName}:${branchName} --depth=10
             git checkout ${branchName}
         """
         println 'Repository cloned successfully.'
     }
-
 }
 
 // function fetch latest changes
-def renameBranchAndFetch(String branchName, String repoPath) {
+def renameBranchAndFetch(Map jobConfig) {
+    println 'Fetching latest changes... !!!!!'
+    String branchName = jobConfig.branchName
+    String repoPath = jobConfig.repoPath
     String backupBranchName = "backup_${branchName}"
     println "Renaming branch '${branchName}' to '${backupBranchName}' and fetching again..."
     println "Repository Path: ${repoPath}"
@@ -48,10 +51,121 @@ def renameBranchAndFetch(String branchName, String repoPath) {
     }
 }
 
-def trackChangesOrCommit(String repoPath, String branchName) {
-    println "Tracking changes for branch: ${branchName} in repo: ${repoPath}"
+// main function to track commit and audit
+def trackCommitAndAudit(Map jobConfig) {
+    println 'Tracking changes... !!!!!'
+    println "Tracking changes for branch: ${jobConfig.branchName} in repo: ${jobConfig.repoPath}"
 
-    println 'Change tracking logic not implemented yet.'
+    // 1. Read last line from audit file to get last processed commit hash
+    def lastLine = readAuditFileLastLine(jobConfig.auditFilePath)
+    def lastProcessedCommitHash = null
+    if (lastLine) {
+        def parts = lastLine.split(',')
+        if (parts.length > 0) {
+            lastProcessedCommitHash = parts[0].trim()
+            println "Last processed commit hash from audit file: ${lastProcessedCommitHash}"
+        }
+    } else {
+        println 'Audit file is empty or only contains header.'
+        // add sencond last commit to audit file
+        dir(jobConfig.repoPath) {
+            def secondLastCommit = sh(script: "git log --pretty=format:'%H' -2 | tail -n 1", returnStdout: true).trim()
+            if (secondLastCommit) {
+                println "Adding second last commit to audit file: ${secondLastCommit}"
+                addCommitInfoToAuditFile(secondLastCommit, jobConfig)
+                lastProcessedCommitHash = secondLastCommit
+            } else {
+                println 'No commits found in the repository.'
+            }
+        }
+    }
+
+    // 2. Get All commits after last processed commit hash and get them as list
+    if (lastProcessedCommitHash) {
+        def newCommits = getAllCommitHashesAfter(jobConfig, lastProcessedCommitHash)
+        if (newCommits) {
+            newCommits.each { commit ->
+                addCommitInfoToAuditFile(commit, jobConfig)
+            }
+        }
+    } else {
+        println 'No last processed commit hash found. Skipping commit listing.'
+    }
+}
+
+// create function that accept commit hash and add all info in audit file as commitHash, author, date, message
+// using commit hash it extract all info
+def addCommitInfoToAuditFile(String commitHash, Map jobConfig) {
+    println 'Adding commit info to audit file... !!!!!'
+    println "Adding commit info to audit file for commit hash: ${commitHash}"
+    // Extract commit details using git log
+    dir(jobConfig.repoPath) {
+        def commitDetails = sh(script: "git log -1 --pretty=format:'%H,%an,%ad,%s' --date=iso ${commitHash}", returnStdout: true).trim()
+        println "Extracted commit details: ${commitDetails}"
+        def existingContent = readFile(file: jobConfig.auditFilePath)
+        def updatedContent = existingContent + "${commitDetails}\n"
+        writeFile file: jobConfig.auditFilePath, text: updatedContent
+    }
+    println "Commit details appended to audit file: ${jobConfig.auditFilePath}"
+}
+
+
+// Read Audit File Last Line and return the last line
+def readAuditFileLastLine(String auditFilePath) {
+    println 'Reading last line from audit file... !!!!!'
+    println "Reading last line from audit file: ${auditFilePath}"
+    if (fileExists(auditFilePath)) {
+        def content = readFile(file: auditFilePath).trim()
+        def lines = content.split('\n')
+        if (lines.length > 1) {
+            return lines[-1] // Return the last line
+        }
+    }
+    return null
+}
+
+// In git repository print all commit hashes after some commit hash and return them as list
+def getAllCommitHashesAfter(Map jobConfig, String commitHash) {
+    println 'Getting all commit hashes after specified commit... !!!!!'
+    println "Listing all commit hashes after: ${commitHash} in repo: ${jobConfig.repoPath}"
+    dir(jobConfig.repoPath) {
+        def commits = sh(script: "git log --pretty=format:'%H' ${commitHash}..HEAD", returnStdout: true).trim()
+        if (commits) {
+            println "Commits after ${commitHash}:"
+            def commitList = []
+            commits.split('\n').each { line ->
+                println line
+                commitList << line
+            }
+            return commitList
+        } else {
+            println "No new commits found after ${commitHash}."
+        }
+    }
+}
+
+// function to evaluate commit info 
+// 1. which file changed in commit
+// 2. if file path match with desired file path then only add to audit file otherwise skip
+def evaluateCommitForFilePath(Map jobConfig, String commitHash) {
+    println 'Evaluating commit for file path... !!!!!'
+    println "Evaluating commit: ${commitHash} for file path: ${jobConfig.filePath} in repo: ${jobConfig.repoPath}"
+    dir(jobConfig.repoPath) {
+        def changedFiles = sh(script: "git diff-tree --no-commit-id --name-only -r ${commitHash}", returnStdout: true).trim()
+        if (changedFiles) {
+            def filesList = changedFiles.split('\n')
+            if (filesList.contains(jobConfig.filePath)) {
+                println "Commit ${commitHash} modifies the desired file path: ${jobConfig.filePath}"
+                return true
+            } else {
+                println "Commit ${commitHash} does not modify the desired file path: ${jobConfig.filePath}. Skipping."
+                return false
+            }
+        } else {
+            println "No files changed in commit ${commitHash}."
+            return false
+        }
+    }
 }
 
 pipeline {
@@ -67,10 +181,14 @@ pipeline {
                     println "Workspace path: ${workspacePath}"
                     def repoFolder = 'resourceBundle'
                     def repoPath = "${workspacePath}/${repoFolder}"
-                    // create file in workspace to audit commit that processed
-                    def auditFilePath = "${workspacePath}/i18n_audit.txt"
+
+                    // create file in workspace to audit commit that processed with header
+                    def auditFilePath = "${workspacePath}/i18n_audit.csv"
                     if (!fileExists(auditFilePath)) {
-                        writeFile file: auditFilePath, text: ''
+                        println "Creating audit file with header: ${auditFilePath}"
+                        writeFile file: auditFilePath, text: 'CommitHash,Author,Date,Message\n'
+                    } else {
+                        println "Audit file already exists: ${auditFilePath}"
                     }
 
                     // The git.properties file is expected to be in the workspace.
@@ -98,8 +216,17 @@ pipeline {
                         def filePath = props.filePath
                         def branchName = props.branchName
 
-                        cloneRepositoryIfNotExists(githubUrl, branchName, repoPath)
-                        renameBranchAndFetch(branchName, repoPath)
+                        def jobConfig = [
+                            githubUrl: githubUrl,
+                            filePath: filePath,
+                            branchName: branchName,
+                            auditFilePath: auditFilePath,
+                            repoPath: repoPath
+                        ]
+
+                        cloneRepositoryIfNotExists(jobConfig)
+                        renameBranchAndFetch(jobConfig)
+                        trackCommitAndAudit(jobConfig)
                     } else {
                         // Fail the build if the properties file is not found
                         error 'Properties file not found in workspace: git.properties'
