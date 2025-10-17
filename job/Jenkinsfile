@@ -80,17 +80,33 @@ def trackCommitAndAudit(Map jobConfig) {
         }
     }
 
-    // 2. Get All commits after last processed commit hash and get them as list
-    if (lastProcessedCommitHash) {
-        def newCommits = getAllCommitHashesAfter(jobConfig, lastProcessedCommitHash)
-        if (newCommits) {
-            newCommits.each { commit ->
-                addCommitInfoToAuditFile(commit, jobConfig)
-            }
-        }
-    } else {
-        println 'No last processed commit hash found. Skipping commit listing.'
+    if(!lastProcessedCommitHash) {
+        currentBuild.result = 'UNSTABLE'
+        println 'No last processed commit hash found after checking second last commit. Exiting.'
+        return
     }
+
+    // 2. Get All commits after last processed commit hash and get them as list
+    def newCommits = getAllCommitHashesAfter(jobConfig, lastProcessedCommitHash)
+    if (!newCommits) {
+        currentBuild.result = 'UNSTABLE'
+        println 'No new commits found. Skipping commit listing.'
+        return
+    }
+    def isDesiredFileChanged = false;
+    // 3. For each commit check if desired file path is modified in that commit
+    newCommits.each { commit ->
+        def hasChanges = evaluateCommitForFilePath(jobConfig, commit)
+        if (hasChanges) {
+            isDesiredFileChanged = true
+            addCommitInfoToAuditFile(commit, jobConfig)
+        }
+    }
+    if (!isDesiredFileChanged) {
+        currentBuild.result = 'UNSTABLE'
+        println "No new commits modified the desired file path: ${jobConfig.filePath}"
+    }
+
 }
 
 // create function that accept commit hash and add all info in audit file as commitHash, author, date, message
@@ -109,6 +125,26 @@ def addCommitInfoToAuditFile(String commitHash, Map jobConfig) {
     println "Commit details appended to audit file: ${jobConfig.auditFilePath}"
 }
 
+// logic to check if the commit has changes for desired file path
+def hasChangesForFilePath(Map jobConfig, String commitHash) {
+    println "Checking if commit ${commitHash} has changes for file path: ${jobConfig.filePath}"
+    dir(jobConfig.repoPath) {
+        def changedFiles = sh(script: "git diff-tree --no-commit-id --name-only -r ${commitHash}", returnStdout: true).trim()
+        if (changedFiles) {
+            def filesList = changedFiles.split('\n')
+            if (filesList.contains(jobConfig.filePath)) {
+                println "Commit ${commitHash} modifies the desired file path: ${jobConfig.filePath}"
+                return true
+            } else {
+                println "Commit ${commitHash} does not modify the desired file path: ${jobConfig.filePath}. Skipping."
+                return false
+            }
+        } else {
+            println "No files changed in commit ${commitHash}."
+            return false
+        }
+    }
+}
 
 // Read Audit File Last Line and return the last line
 def readAuditFileLastLine(String auditFilePath) {
@@ -139,6 +175,7 @@ def getAllCommitHashesAfter(Map jobConfig, String commitHash) {
             }
             return commitList
         } else {
+            currentBuild.result = 'UNSTABLE'
             println "No new commits found after ${commitHash}."
         }
     }
@@ -152,9 +189,15 @@ def evaluateCommitForFilePath(Map jobConfig, String commitHash) {
     println "Evaluating commit: ${commitHash} for file path: ${jobConfig.filePath} in repo: ${jobConfig.repoPath}"
     dir(jobConfig.repoPath) {
         def changedFiles = sh(script: "git diff-tree --no-commit-id --name-only -r ${commitHash}", returnStdout: true).trim()
+        println "Changed files in commit ${commitHash}: ${changedFiles}"
         if (changedFiles) {
             def filesList = changedFiles.split('\n')
-            if (filesList.contains(jobConfig.filePath)) {
+            // check for preprod file path
+            if (filesList.contains(jobConfig.gitFilePathPreprod)) {
+                println "Commit ${commitHash} modifies the desired file path: ${jobConfig.filePath}"
+                return true
+            }
+            if (filesList.contains(jobConfig.gitFilePathProd)) {
                 println "Commit ${commitHash} modifies the desired file path: ${jobConfig.filePath}"
                 return true
             } else {
@@ -170,68 +213,173 @@ def evaluateCommitForFilePath(Map jobConfig, String commitHash) {
 
 pipeline {
     agent any
+    
+    environment {
+        REPO_FOLDER = 'resourceBundle'
+        AUDIT_FILE = 'i18n_audit.csv'
+    }
+    
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        skipDefaultCheckout()
+    }
+    
     stages {
-        stage('I18n Resource File Sync') {
+        stage('Initialize') {
             steps {
                 script {
-                    println '==============================='
-                    println 'Starting I18n Resource File Sync Job'
-
+                    echo '==============================='
+                    echo 'Starting I18n Resource File Sync Job'
+                    echo '==============================='
+                    
+                    // Set workspace paths as script variables
                     def workspacePath = pwd()
-                    println "Workspace path: ${workspacePath}"
-                    def repoFolder = 'resourceBundle'
-                    def repoPath = "${workspacePath}/${repoFolder}"
+                    def repoPath = "${workspacePath}/${env.REPO_FOLDER}"
+                    def auditFilePath = "${workspacePath}/${env.AUDIT_FILE}"
+                    
+                    // Store in environment for use in later stages
+                    env.WORKSPACE_PATH = workspacePath
+                    env.REPO_PATH = repoPath
+                    env.AUDIT_FILE_PATH = auditFilePath
+                    
+                    echo "Workspace: ${workspacePath}"
+                    echo "Repository Path: ${repoPath}"
+                    echo "Audit File: ${auditFilePath}"
+                }
+            }
+        }
+        
+        stage('Load Configuration') {
+            steps {
+                script {
+                    echo 'Loading configuration from i18n-sync.properties...'
 
-                    // create file in workspace to audit commit that processed with header
-                    def auditFilePath = "${workspacePath}/i18n_audit.csv"
-                    if (!fileExists(auditFilePath)) {
-                        println "Creating audit file with header: ${auditFilePath}"
-                        writeFile file: auditFilePath, text: 'CommitHash,Author,Date,Message\n'
-                    } else {
-                        println "Audit file already exists: ${auditFilePath}"
+                    if (!fileExists('i18n-sync.properties')) {
+                        error 'Properties file not found in workspace: i18n-sync.properties'
                     }
 
-                    // The git.properties file is expected to be in the workspace.
-                    println 'Checking for properties file: git.properties'
-
-                    if (fileExists('git.properties')) {
-                        println 'Found properties file: git.properties'
-
-                        // Read and display the file contents
-                        def fileContent = readFile('git.properties')
-                        println 'File contents:'
-                        println fileContent
-                        def props = [:]
-                        fileContent.split('\n').each { line ->
-                            line = line.trim()
-                            if (line && !line.startsWith('#')) {
-                                def parts = line.split('=', 2)
-                                if (parts.length == 2) {
-                                    props[parts[0].trim()] = parts[1].trim()
-                                }
+                    def fileContent = readFile('i18n-sync.properties')
+                    
+                    def props = [:]
+                    fileContent.split('\n').each { line ->
+                        line = line.trim()
+                        if (line && !line.startsWith('#')) {
+                            def parts = line.split('=', 2)
+                            if (parts.length == 2) {
+                                props[parts[0].trim()] = parts[1].trim()
                             }
                         }
+                    }
 
-                        def githubUrl = props.githubUrl
-                        def filePath = props.filePath
-                        def branchName = props.branchName
+                    // print props for debugging
+                    echo "Loaded properties: ${props}"
+                    // Store properties in environment variables
+                    env.GITHUB_URL = props['github-url'] ?: ''
+                    env.BRANCH_NAME = props['branch-name'] ?: ''
+                    env.I18N_GIT_PATH_PREPROD = props['i18n-git-path-preprod'] ?: ''
+                    env.I18N_SERVER_PATH_PREPROD = props['i18n-server-path-preprod'] ?: ''
+                    env.I18N_GIT_PATH_PROD = props['i18n-git-path-prod'] ?: ''
+                    env.I18N_SERVER_PATH_PROD = props['i18n-server-path-prod'] ?: ''
 
-                        def jobConfig = [
-                            githubUrl: githubUrl,
-                            filePath: filePath,
-                            branchName: branchName,
-                            auditFilePath: auditFilePath,
-                            repoPath: repoPath
-                        ]
+                    echo "Configuration loaded successfully"
+                }
+            }
+        }
 
-                        cloneRepositoryIfNotExists(jobConfig)
-                        renameBranchAndFetch(jobConfig)
-                        trackCommitAndAudit(jobConfig)
+        stage('Initialize Audit File') {
+            steps {
+                script {
+                    echo 'Initializing audit file...'
+                    if (!fileExists(env.AUDIT_FILE_PATH)) {
+                        echo "Creating new audit file: ${env.AUDIT_FILE_PATH}"
+                        writeFile file: env.AUDIT_FILE_PATH, text: 'CommitHash,Author,Date,Message\n'
                     } else {
-                        // Fail the build if the properties file is not found
-                        error 'Properties file not found in workspace: git.properties'
+                        echo "Audit file already exists: ${env.AUDIT_FILE_PATH}"
+                        def lineCount = sh(script: "wc -l < '${env.AUDIT_FILE_PATH}'", returnStdout: true).trim()
+                        echo "Current audit file has ${lineCount} lines"
                     }
                 }
+            }
+        }
+        
+        stage('Clone Repository') {
+            steps {
+                script {
+                    def config = [
+                        githubUrl: env.GITHUB_URL,
+                        branchName: env.BRANCH_NAME,
+                        auditFilePath: env.AUDIT_FILE_PATH,
+                        repoPath: env.REPO_PATH,
+                        gitFilePathPreprod: env.I18N_GIT_PATH_PREPROD,
+                        gitFilePathProd: env.I18N_GIT_PATH_PROD,
+                        serverFilePathPreprod: env.I18N_SERVER_PATH_PREPROD,
+                        serverFilePathProd: env.I18N_SERVER_PATH_PROD
+                    ]
+                    echo "Cloning repository: ${config.githubUrl}"
+                    cloneRepositoryIfNotExists(config)
+                }
+            }
+        }
+        
+        stage('Fetch Latest Changes') {
+            steps {
+                script {
+                    def config = [
+                        githubUrl: env.GITHUB_URL,
+                        filePath: env.FILE_PATH,
+                        branchName: env.BRANCH_NAME,
+                        auditFilePath: env.AUDIT_FILE_PATH,
+                        repoPath: env.REPO_PATH
+                    ]
+                    echo "Fetching latest changes for branch: ${config.branchName}"
+                    renameBranchAndFetch(config)
+                }
+            }
+        }
+        
+        stage('Track Commits') {
+            steps {
+                script {
+                    def config = [
+                        githubUrl: env.GITHUB_URL,
+                        filePath: env.FILE_PATH,
+                        branchName: env.BRANCH_NAME,
+                        auditFilePath: env.AUDIT_FILE_PATH,
+                        repoPath: env.REPO_PATH
+                    ]
+                    echo "Tracking and auditing commits..."
+                    trackCommitAndAudit(config)
+                }
+            }
+        }
+        
+        stage('Archive Audit File') {
+            steps {
+                script {
+                    echo 'Archiving audit file as build artifact...'
+                    archiveArtifacts artifacts: "${env.AUDIT_FILE}", allowEmptyArchive: false, fingerprint: true
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '=============================='
+            echo 'Pipeline completed successfully!'
+            echo '=============================='
+        }
+        failure {
+            echo '=============================='
+            echo 'Pipeline failed!'
+            echo '=============================='
+        }
+        always {
+            script {
+                echo 'Cleaning up workspace (optional)...'
+                // Uncomment to clean workspace after build
+                // cleanWs()
             }
         }
     }

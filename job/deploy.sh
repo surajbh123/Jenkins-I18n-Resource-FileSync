@@ -45,19 +45,13 @@ sudo mkdir -p "$WORKSPACE_DIR"
 sudo chown -R jenkins:jenkins "$WORKSPACE_DIR"
 sudo chmod -R 755 "$WORKSPACE_DIR"
 
-echo "Created job and workspace directories with appropriate permissions."
 
-## Copy properties file to the workspace
-if [ -f "./git.properties" ]; then
-    echo "Copying git.properties to workspace..."
-    sudo cp ./git.properties "$WORKSPACE_DIR/git.properties"
-    sudo chown jenkins:jenkins "$WORKSPACE_DIR/git.properties"
-    sudo chmod 644 "$WORKSPACE_DIR/git.properties"
-    echo "git.properties copied successfully."
-else
-    echo "ERROR: git.properties not found in current directory!"
-    exit 1
-fi
+echo "Copying configuration files to workspace..."
+    sudo cp ./config/*.properties "$WORKSPACE_DIR/"
+    sudo chown jenkins:jenkins "$WORKSPACE_DIR/"*.properties
+    sudo chmod 644 "$WORKSPACE_DIR/"*.properties
+    echo "Configuration files copied successfully."
+
 
 ## give permission to jenkins home directory read/write (final permissions)
 sudo chown -R jenkins:jenkins "$JENKINS_HOME"
