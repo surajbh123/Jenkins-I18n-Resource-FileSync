@@ -1,2 +1,0 @@
-incorrectPassword=The password you entered is incorrect. Please try again.
-invalidEmail=The email address you entered is not valid.
